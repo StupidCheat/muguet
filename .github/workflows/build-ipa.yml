@@ -1,0 +1,62 @@
+name: Build Muguet IPA
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Muguet
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Download game code
+        run: |
+          curl -fL "https://github.com/shplash/muguet/releases/download/game-code-v1/b.zip" -o b.zip
+          unzip -t b.zip
+          unzip -Z1 b.zip | grep -E '(^|/)b/[^/]+/game\.wasm$'
+      - name: Show build environment
+        run: |
+          uname -m
+          sw_vers
+          xcodebuild -version
+      - name: Install build dependencies
+        run: |
+          brew install rustup xcodegen
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1
+          rustup target add aarch64-apple-ios \
+            --toolchain 1.98.1
+      - name: Prepare unsigned build
+        run: |
+          sed -i '' \
+            's/\[ -n "$TEAM" \] || { echo "set TEAM=<your Apple developer team id>"; exit 1; }/:/' \
+            make-ios.sh
+          sed -i '' \
+            's/-allowProvisioningUpdates build \\/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \\/' \
+            make-ios.sh
+          sed -i '' \
+            's/codesign --verify "$APP"/echo "Skipping signature verification for unsigned build"/' \
+            make-ios.sh
+      - name: Build IPA with game code
+        run: |
+          FREE=1 \
+          BUNDLE_ID=com.example.muguet \
+          ./make-ios.sh b.zip --ipa
+      - name: Verify IPA
+        run: |
+          test -f build/Muguet.ipa
+          ls -lh build/Muguet.ipa
+          unzip -t build/Muguet.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muguet-unsigned-IPA
+          path: build/Muguet.ipa
+          if-no-files-found: error
+          retention-days: 3
